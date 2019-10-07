@@ -1,7 +1,7 @@
 /*******************************************************************************
 
-    uBlock Origin - a browser extension to block requests.
-    Copyright (C) 2015-present Raymond Hill
+    uBlock - a browser extension to block requests.
+    Copyright (C) 2015-2017 Raymond Hill
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -26,20 +26,34 @@
 
 µBlock.logger = (function() {
 
-    let buffer = null;
-    let lastReadTime = 0;
-    let writePtr = 0;
+    var LogEntry = function(args) {
+        this.init(args);
+    };
+
+    LogEntry.prototype.init = function(args) {
+        this.tstamp = Date.now();
+        this.tab = args[0] || '';
+        this.cat = args[1] || '';
+        this.d0 = args[2];
+        this.d1 = args[3];
+        this.d2 = args[4];
+        this.d3 = args[5];
+        this.d4 = args[6];
+    };
+
+    var buffer = null;
+    var lastReadTime = 0;
+    var writePtr = 0;
 
     // After 60 seconds without being read, a buffer will be considered
     // unused, and thus removed from memory.
-    const logBufferObsoleteAfter = 30 * 1000;
+    var logBufferObsoleteAfter = 30 * 1000;
 
-    const janitor = ( ) => {
+    var janitor = function() {
         if (
             buffer !== null &&
             lastReadTime < (Date.now() - logBufferObsoleteAfter)
         ) {
-            api.enabled = false;
             buffer = null;
             writePtr = 0;
             api.ownerId = undefined;
@@ -50,37 +64,31 @@
         }
     };
 
-    const boxEntry = function(details) {
-        if ( details.tstamp === undefined ) {
-            details.tstamp = Date.now();
-        }
-        return JSON.stringify(details);
-    };
-
-    const api = {
-        enabled: false,
+    var api = {
         ownerId: undefined,
-        writeOne: function(details) {
+        writeOne: function() {
             if ( buffer === null ) { return; }
             if ( writePtr === buffer.length ) {
-                buffer.push(boxEntry(details));
+                buffer.push(new LogEntry(arguments));
             } else {
-                buffer[writePtr] = boxEntry(details);
+                buffer[writePtr].init(arguments);
             }
             writePtr += 1;
         },
         readAll: function(ownerId) {
             this.ownerId = ownerId;
             if ( buffer === null ) {
-                this.enabled = true;
                 buffer = [];
                 vAPI.setTimeout(janitor, logBufferObsoleteAfter);
             }
-            const out = buffer.slice(0, writePtr);
+            var out = buffer.slice(0, writePtr);
             writePtr = 0;
             lastReadTime = Date.now();
             return out;
         },
+        isEnabled: function() {
+            return buffer !== null;
+        }
     };
 
     return api;

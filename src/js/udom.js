@@ -1,7 +1,7 @@
 /*******************************************************************************
 
     uBlock Origin - a browser extension to block requests.
-    Copyright (C) 2014-present Raymond Hill
+    Copyright (C) 2014-2016 Raymond Hill
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -32,11 +32,11 @@
 // the code here does *only* what I need, and nothing more, and with a lot
 // of assumption on passed parameters, etc. I grow it on a per-need-basis only.
 
-const uDom = (function() {
+var uDom = (function() {
 
 /******************************************************************************/
 
-const DOMList = function() {
+var DOMList = function() {
     this.nodes = [];
 };
 
@@ -54,7 +54,7 @@ Object.defineProperty(
 
 /******************************************************************************/
 
-const DOMListFactory = function(selector, context) {
+var DOMListFactory = function(selector, context) {
     var r = new DOMList();
     if ( typeof selector === 'string' ) {
         selector = selector.trim();
@@ -92,7 +92,7 @@ DOMListFactory.nodeFromSelector = function(selector) {
 
 /******************************************************************************/
 
-const addNodeToList = function(list, node) {
+var addNodeToList = function(list, node) {
     if ( node ) {
         list.nodes.push(node);
     }
@@ -101,7 +101,7 @@ const addNodeToList = function(list, node) {
 
 /******************************************************************************/
 
-const addNodeListToList = function(list, nodelist) {
+var addNodeListToList = function(list, nodelist) {
     if ( nodelist ) {
         var n = nodelist.length;
         for ( var i = 0; i < n; i++ ) {
@@ -113,14 +113,14 @@ const addNodeListToList = function(list, nodelist) {
 
 /******************************************************************************/
 
-const addListToList = function(list, other) {
+var addListToList = function(list, other) {
     list.nodes = list.nodes.concat(other.nodes);
     return list;
 };
 
 /******************************************************************************/
 
-const addSelectorToList = function(list, selector, context) {
+var addSelectorToList = function(list, selector, context) {
     var p = context || document;
     var r = p.querySelectorAll(selector);
     var n = r.length;
@@ -128,6 +128,46 @@ const addSelectorToList = function(list, selector, context) {
         list.nodes.push(r[i]);
     }
     return list;
+};
+
+/******************************************************************************/
+
+var nodeInNodeList = function(node, nodeList) {
+    var i = nodeList.length;
+    while ( i-- ) {
+        if ( nodeList[i] === node ) {
+            return true;
+        }
+    }
+    return false;
+};
+
+/******************************************************************************/
+
+var doesMatchSelector = function(node, selector) {
+    if ( !node ) {
+        return false;
+    }
+    if ( node.nodeType !== 1 ) {
+        return false;
+    }
+    if ( selector === undefined ) {
+        return true;
+    }
+    var parentNode = node.parentNode;
+    if ( !parentNode || !parentNode.setAttribute ) {
+        return false;
+    }
+    var doesMatch = false;
+    parentNode.setAttribute('uDom-32kXc6xEZA7o73AMB8vLbLct1RZOkeoO', '');
+    var grandpaNode = parentNode.parentNode || document;
+    var nl = grandpaNode.querySelectorAll('[uDom-32kXc6xEZA7o73AMB8vLbLct1RZOkeoO] > ' + selector);
+    var i = nl.length;
+    while ( doesMatch === false && i-- ) {
+        doesMatch = nl[i] === node;
+    }
+    parentNode.removeAttribute('uDom-32kXc6xEZA7o73AMB8vLbLct1RZOkeoO');
+    return doesMatch;
 };
 
 /******************************************************************************/
@@ -190,8 +230,12 @@ DOMList.prototype.next = function(selector) {
         node = this.nodes[i];
         while ( node.nextSibling !== null ) {
             node = node.nextSibling;
-            if ( node.nodeType !== 1 ) { continue; }
-            if ( node.matches(selector) === false ) { continue; }
+            if ( node.nodeType !== 1 ) {
+                continue;
+            }
+            if ( doesMatchSelector(node, selector) === false ) {
+                continue;
+            }
             addNodeToList(r, node);
             break;
         }
@@ -216,7 +260,7 @@ DOMList.prototype.filter = function(filter) {
     var filterFunc;
     if ( typeof filter === 'string' ) {
         filterFunc = function() {
-            return this.matches(filter);
+            return doesMatchSelector(this, filter);
         };
     } else if ( typeof filter === 'function' ) {
         filterFunc = filter;
@@ -242,13 +286,12 @@ DOMList.prototype.filter = function(filter) {
 
 DOMList.prototype.ancestors = function(selector) {
     var r = new DOMList();
-    for ( var i = 0, n = this.nodes.length; i < n; i++ ) {
-        var node = this.nodes[i].parentNode;
+    var n = this.nodes.length;
+    var node;
+    for ( var i = 0; i < n; i++ ) {
+        node = this.nodes[i].parentNode;
         while ( node ) {
-            if (
-                node instanceof Element &&
-                node.matches(selector)
-            ) {
+            if ( doesMatchSelector(node, selector) ) {
                 addNodeToList(r, node);
             }
             node = node.parentNode;
@@ -517,7 +560,7 @@ DOMList.prototype.text = function(text) {
 
 /******************************************************************************/
 
-const toggleClass = function(node, className, targetState) {
+var toggleClass = function(node, className, targetState) {
     var tokenList = node.classList;
     if ( tokenList instanceof DOMTokenList === false ) {
         return;
@@ -591,9 +634,9 @@ DOMList.prototype.toggleClasses = function(classNames, targetState) {
 
 /******************************************************************************/
 
-const listenerEntries = [];
+var listenerEntries = [];
 
-const ListenerEntry = function(target, type, capture, callback) {
+var ListenerEntry = function(target, type, capture, callback) {
     this.target = target;
     this.type = type;
     this.capture = capture;
@@ -609,22 +652,14 @@ ListenerEntry.prototype.dispose = function() {
 
 /******************************************************************************/
 
-const makeEventHandler = function(selector, callback) {
+var makeEventHandler = function(selector, callback) {
     return function(event) {
-        const dispatcher = event.currentTarget;
-        if (
-            dispatcher instanceof HTMLElement === false ||
-            typeof dispatcher.querySelectorAll !== 'function'
-        ) {
+        var dispatcher = event.currentTarget;
+        if ( !dispatcher || typeof dispatcher.querySelectorAll !== 'function' ) {
             return;
         }
-        const receiver = event.target;
-        const ancestor = receiver.closest(selector);
-        if (
-            ancestor === receiver &&
-            ancestor !== dispatcher &&
-            dispatcher.contains(ancestor)
-        ) {
+        var receiver = event.target;
+        if ( nodeInNodeList(receiver, dispatcher.querySelectorAll(selector)) ) {
             callback.call(receiver, event);
         }
     };
@@ -638,10 +673,9 @@ DOMList.prototype.on = function(etype, selector, callback) {
         callback = makeEventHandler(selector, callback);
     }
 
-    for ( const node of this.nodes ) {
-        listenerEntries.push(
-            new ListenerEntry(node, etype, selector !== undefined, callback)
-        );
+    var i = this.nodes.length;
+    while ( i-- ) {
+        listenerEntries.push(new ListenerEntry(this.nodes[i], etype, selector !== undefined, callback));
     }
     return this;
 };
@@ -669,6 +703,20 @@ DOMList.prototype.trigger = function(etype) {
     }
     return this;
 };
+
+/******************************************************************************/
+
+// Cleanup
+
+var onBeforeUnload = function() {
+    var entry;
+    while ( (entry = listenerEntries.pop()) ) {
+        entry.dispose();
+    }
+    window.removeEventListener('beforeunload', onBeforeUnload);
+};
+
+window.addEventListener('beforeunload', onBeforeUnload);
 
 /******************************************************************************/
 

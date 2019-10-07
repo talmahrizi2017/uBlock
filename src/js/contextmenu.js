@@ -1,7 +1,7 @@
 /*******************************************************************************
 
     uBlock Origin - a browser extension to block requests.
-    Copyright (C) 2014-present Raymond Hill
+    Copyright (C) 2014-2017 Raymond Hill
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -23,7 +23,7 @@
 
 /******************************************************************************/
 
-µBlock.contextMenu = (( ) => {
+µBlock.contextMenu = (function() {
 
 /******************************************************************************/
 
@@ -33,13 +33,19 @@ if ( vAPI.contextMenu === undefined ) {
     };
 }
 
+var µb = µBlock;
+
 /******************************************************************************/
 
-const onBlockElement = function(details, tab) {
-    if ( tab === undefined ) { return; }
-    if ( /^https?:\/\//.test(tab.url) === false ) { return; }
-    let tagName = details.tagName || '';
-    let src = details.frameUrl || details.srcUrl || details.linkUrl || '';
+var onBlockElement = function(details, tab) {
+    if ( tab === undefined ) {
+        return;
+    }
+    if ( /^https?:\/\//.test(tab.url) === false ) {
+        return;
+    }
+    var tagName = details.tagName || '';
+    var src = details.frameUrl || details.srcUrl || details.linkUrl || '';
 
     if ( !tagName ) {
         if ( typeof details.frameUrl === 'string' ) {
@@ -57,22 +63,21 @@ const onBlockElement = function(details, tab) {
         }
     }
 
-    µBlock.epickerArgs.mouse = true;
-    µBlock.elementPickerExec(tab.id, tagName + '\t' + src);
+    µb.elementPickerExec(tab.id, tagName + '\t' + src);
 };
 
 /******************************************************************************/
 
-const onTemporarilyAllowLargeMediaElements = function(details, tab) {
+var onTemporarilyAllowLargeMediaElements = function(details, tab) {
     if ( tab === undefined ) { return; }
-    let pageStore = µBlock.pageStoreFromTabId(tab.id);
+    var pageStore = µb.pageStoreFromTabId(tab.id);
     if ( pageStore === null ) { return; }
     pageStore.temporarilyAllowLargeMediaElements(true);
 };
 
 /******************************************************************************/
 
-const onEntryClicked = function(details, tab) {
+var onEntryClicked = function(details, tab) {
     if ( details.menuItemId === 'uBlock0-blockElement' ) {
         return onBlockElement(details, tab);
     }
@@ -83,37 +88,39 @@ const onEntryClicked = function(details, tab) {
 
 /******************************************************************************/
 
-const menuEntries = [
+var menuEntries = [
     {
         id: 'uBlock0-blockElement',
         title: vAPI.i18n('pickerContextMenuEntry'),
         contexts: ['all'],
+        documentUrlPatterns: ['https://*/*', 'http://*/*']
     },
     {
         id: 'uBlock0-temporarilyAllowLargeMediaElements',
         title: vAPI.i18n('contextMenuTemporarilyAllowLargeMediaElements'),
         contexts: ['all'],
+        documentUrlPatterns: ['https://*/*', 'http://*/*']
     }
 ];
 
 /******************************************************************************/
 
-let currentBits = 0;
-
-const update = function(tabId = undefined) {
-    let newBits = 0;
-    if ( µBlock.userSettings.contextMenuEnabled && tabId !== undefined ) {
-        let pageStore = µBlock.pageStoreFromTabId(tabId);
-        if ( pageStore && pageStore.getNetFilteringSwitch() ) {
+var update = function(tabId) {
+    var newBits = 0;
+    if ( µb.userSettings.contextMenuEnabled && tabId !== null ) {
+        var pageStore = µb.pageStoreFromTabId(tabId);
+        if ( pageStore ) {
             newBits |= 0x01;
             if ( pageStore.largeMediaCount !== 0 ) {
                 newBits |= 0x02;
             }
         }
     }
-    if ( newBits === currentBits ) { return; }
+    if ( newBits === currentBits ) {
+        return;
+    }
     currentBits = newBits;
-    let usedEntries = [];
+    var usedEntries = [];
     if ( newBits & 0x01 ) {
         usedEntries.push(menuEntries[0]);
     }
@@ -123,25 +130,25 @@ const update = function(tabId = undefined) {
     vAPI.contextMenu.setEntries(usedEntries, onEntryClicked);
 };
 
+var currentBits = 0;
+
+vAPI.contextMenu.onMustUpdate = update;
+
 /******************************************************************************/
 
-// https://github.com/uBlockOrigin/uBlock-issues/issues/151
-//   For unknown reasons, the currently active tab will not be successfully
-//   looked up after closing a window.
-
-vAPI.contextMenu.onMustUpdate = async function(tabId = undefined) {
-    if ( µBlock.userSettings.contextMenuEnabled === false ) {
-        return update();
+return {
+    update: function(tabId) {
+        if ( µb.userSettings.contextMenuEnabled && tabId === undefined ) {
+            vAPI.tabs.get(null, function(tab) {
+                if ( tab ) {
+                    update(tab.id);
+                }
+            });
+            return;
+        }
+        update(tabId);
     }
-    if ( tabId !== undefined ) {
-        return update(tabId);
-    }
-    const tab = await vAPI.tabs.getCurrent();
-    if ( tab instanceof Object === false ) { return; }
-    update(tab.id);
 };
-
-return { update: vAPI.contextMenu.onMustUpdate };
 
 /******************************************************************************/
 

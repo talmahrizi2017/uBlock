@@ -1,7 +1,7 @@
 /*******************************************************************************
 
     uBlock Origin - a browser extension to block requests.
-    Copyright (C) 2015-present Raymond Hill
+    Copyright (C) 2015-2017 Raymond Hill
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -23,64 +23,59 @@
 
 /******************************************************************************/
 
-µBlock.staticFilteringReverseLookup = (( ) => {
+µBlock.staticFilteringReverseLookup = (function() {
 
 /******************************************************************************/
 
-const workerTTL = 5 * 60 * 1000;
-const pendingResponses = new Map();
-
-let worker = null;
-let workerTTLTimer;
-let needLists = true;
-let messageId = 1;
+var worker = null;
+var workerTTL = 5 * 60 * 1000;
+var workerTTLTimer = null;
+var needLists = true;
+var messageId = 1;
+var pendingResponses = Object.create(null);
 
 /******************************************************************************/
 
-const onWorkerMessage = function(e) {
-    const msg = e.data;
-    const callback = pendingResponses.get(msg.id);
-    pendingResponses.delete(msg.id);
+var onWorkerMessage = function(e) {
+    var msg = e.data;
+    var callback = pendingResponses[msg.id];
+    delete pendingResponses[msg.id];
     callback(msg.response);
 };
 
 /******************************************************************************/
 
-const stopWorker = function() {
-    if ( workerTTLTimer !== undefined ) {
-        clearTimeout(workerTTLTimer);
-        workerTTLTimer = undefined;
+var stopWorker = function() {
+    workerTTLTimer = null;
+    if ( worker === null ) {
+        return;
     }
-    if ( worker === null ) { return; }
     worker.terminate();
     worker = null;
     needLists = true;
-    pendingResponses.clear();
+    pendingResponses = Object.create(null);
 };
 
 /******************************************************************************/
 
-const initWorker = function() {
+var initWorker = function(callback) {
     if ( worker === null ) {
         worker = new Worker('js/reverselookup-worker.js');
         worker.onmessage = onWorkerMessage;
     }
 
-    // The worker will be shutdown after n minutes without being used.
-    if ( workerTTLTimer !== undefined ) {
-        clearTimeout(workerTTLTimer);
-    }
-    workerTTLTimer = vAPI.setTimeout(stopWorker, workerTTL);
-
     if ( needLists === false ) {
-        return Promise.resolve();
+        callback();
+        return;
     }
+
     needLists = false;
 
-    const entries = new Map();
+    var entries = Object.create(null);
+    var countdown = 0;
 
-    const onListLoaded = function(details) {
-        const entry = entries.get(details.assetKey);
+    var onListLoaded = function(details) {
+        var entry = entries[details.assetKey];
 
         // https://github.com/gorhill/uBlock/issues/536
         // Use assetKey when there is no filter list title.
@@ -94,40 +89,44 @@ const initWorker = function() {
                 content: details.content
             }
         });
+
+        countdown -= 1;
+        if ( countdown === 0 ) {
+            callback();
+        }
     };
 
-    const µb = µBlock;
-    for ( const listKey in µb.availableFilterLists ) {
+    var µb = µBlock;
+    var listKey, entry;
+
+    for ( listKey in µb.availableFilterLists ) {
         if ( µb.availableFilterLists.hasOwnProperty(listKey) === false ) {
             continue;
         }
-        const entry = µb.availableFilterLists[listKey];
+        entry = µb.availableFilterLists[listKey];
         if ( entry.off === true ) { continue; }
-        entries.set(listKey, {
+        entries[listKey] = {
             title: listKey !== µb.userFiltersPath ?
                 entry.title :
                 vAPI.i18n('1pPageName'),
             supportURL: entry.supportURL || ''
-        });
-    }
-    if ( entries.size === 0 ) {
-        return Promise.resolve();
+        };
+        countdown += 1;
     }
 
-    const promises = [];
-    for ( const listKey of entries.keys() ) {
-        promises.push(
-            µb.getCompiledFilterList(listKey).then(details => {
-                onListLoaded(details);
-            })
-        );
+    if ( countdown === 0 ) {
+        callback();
+        return;
     }
-    return Promise.all(promises);
+
+    for ( listKey in entries ) {
+        µb.getCompiledFilterList(listKey, onListLoaded);
+    }
 };
 
 /******************************************************************************/
 
-const fromNetFilter = async function(compiledFilter, rawFilter, callback) {
+var fromNetFilter = function(compiledFilter, rawFilter, callback) {
     if ( typeof callback !== 'function' ) {
         return;
     }
@@ -137,69 +136,83 @@ const fromNetFilter = async function(compiledFilter, rawFilter, callback) {
         return;
     }
 
-    await initWorker();
+    if ( workerTTLTimer !== null ) {
+        clearTimeout(workerTTLTimer);
+        workerTTLTimer = null;
+    }
 
-    const id = messageId++;
-    const message = {
-        what: 'fromNetFilter',
-        id: id,
-        compiledFilter: compiledFilter,
-        rawFilter: rawFilter
+    var onWorkerReady = function() {
+        var id = messageId++;
+        var message = {
+            what: 'fromNetFilter',
+            id: id,
+            compiledFilter: compiledFilter,
+            rawFilter: rawFilter
+        };
+        pendingResponses[id] = callback;
+        worker.postMessage(message);
+
+        // The worker will be shutdown after n minutes without being used.
+        workerTTLTimer = vAPI.setTimeout(stopWorker, workerTTL);
     };
-    pendingResponses.set(id, callback);
-    worker.postMessage(message);
+
+    initWorker(onWorkerReady);
 };
 
 /******************************************************************************/
 
-const fromCosmeticFilter = async function(details, callback) {
-    if ( typeof callback !== 'function' ) { return; }
+var fromCosmeticFilter = function(hostname, rawFilter, callback) {
+    if ( typeof callback !== 'function' ) {
+        return;
+    }
 
-    if ( details.rawFilter === '' ) {
+    if ( rawFilter === '' ) {
         callback();
         return;
     }
 
-    await initWorker();
+    if ( workerTTLTimer !== null ) {
+        clearTimeout(workerTTLTimer);
+        workerTTLTimer = null;
+    }
 
-    const id = messageId++;
-    const hostname = µBlock.URI.hostnameFromURI(details.url);
-    pendingResponses.set(id, callback);
-    worker.postMessage({
-        what: 'fromCosmeticFilter',
-        id: id,
-        domain: µBlock.URI.domainFromHostname(hostname),
-        hostname: hostname,
-        ignoreGeneric:
-            µBlock.staticNetFilteringEngine.matchStringElementHide(
-                'generic',
-                details.url
-            ) === 2,
-        ignoreSpecific:
-            µBlock.staticNetFilteringEngine.matchStringElementHide(
-                'specific',
-                details.url
-            ) === 2,
-        rawFilter: details.rawFilter
-    });
+    var onWorkerReady = function() {
+        var id = messageId++;
+        var message = {
+            what: 'fromCosmeticFilter',
+            id: id,
+            domain: µBlock.URI.domainFromHostname(hostname),
+            hostname: hostname,
+            rawFilter: rawFilter
+        };
+        pendingResponses[id] = callback;
+        worker.postMessage(message);
+
+        // The worker will be shutdown after n minutes without being used.
+        workerTTLTimer = vAPI.setTimeout(stopWorker, workerTTL);
+    };
+
+    initWorker(onWorkerReady);
 };
 
 /******************************************************************************/
 
 // This tells the worker that filter lists may have changed.
 
-const resetLists = function() {
+var resetLists = function() {
     needLists = true;
-    if ( worker === null ) { return; }
+    if ( worker === null ) {
+        return;
+    }
     worker.postMessage({ what: 'resetLists' });
 };
 
 /******************************************************************************/
 
 return {
-    fromNetFilter,
-    fromCosmeticFilter,
-    resetLists,
+    fromNetFilter: fromNetFilter,
+    fromCosmeticFilter: fromCosmeticFilter,
+    resetLists: resetLists,
     shutdown: stopWorker
 };
 

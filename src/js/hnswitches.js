@@ -1,7 +1,7 @@
 /*******************************************************************************
 
     uBlock Origin - a Chromium browser extension to black/white list requests.
-    Copyright (C) 2015-present Raymond Hill
+    Copyright (C) 2015-2017 Raymond Hill
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -42,8 +42,7 @@ var switchBitOffsets = {
     'no-cosmetic-filtering':  4,
           'no-remote-fonts':  6,
            'no-large-media':  8,
-           'no-csp-reports': 10,
-             'no-scripting': 12,
+           'no-csp-reports': 10
 };
 
 var switchStateToNameMap = {
@@ -61,62 +60,46 @@ var nameToSwitchStateMap = {
 /******************************************************************************/
 
 // For performance purpose, as simple tests as possible
-var reNotASCII = /[^\x20-\x7F]/;
+var reHostnameVeryCoarse = /[g-z_-]/;
+var reIPv4VeryCoarse = /\.\d+$/;
 
 // http://tools.ietf.org/html/rfc5952
 // 4.3: "MUST be represented in lowercase"
 // Also: http://en.wikipedia.org/wiki/IPv6_address#Literal_IPv6_addresses_in_network_resource_identifiers
 
+var isIPAddress = function(hostname) {
+    if ( reHostnameVeryCoarse.test(hostname) ) {
+        return false;
+    }
+    if ( reIPv4VeryCoarse.test(hostname) ) {
+        return true;
+    }
+    return hostname.startsWith('[');
+};
+
+var toBroaderHostname = function(hostname) {
+    var pos = hostname.indexOf('.');
+    if ( pos !== -1 ) {
+        return hostname.slice(pos + 1);
+    }
+    return hostname !== '*' && hostname !== '' ? '*' : '';
+};
+
+var toBroaderIPAddress = function(ipaddress) {
+    return ipaddress !== '*' && ipaddress !== '' ? '*' : '';
+};
+
+var selectHostnameBroadener = function(hostname) {
+    return isIPAddress(hostname) ? toBroaderIPAddress : toBroaderHostname;
+};
+
 /******************************************************************************/
 
 HnSwitches.prototype.reset = function() {
-    this.switches = new Map();
+    this.switches = {};
     this.n = '';
     this.z = '';
     this.r = 0;
-    this.changed = true;
-    this.decomposedSource = [];
-};
-
-/******************************************************************************/
-
-HnSwitches.prototype.assign = function(from) {
-    // Remove rules not in other
-    for ( let hn of this.switches.keys() ) {
-        if ( from.switches.has(hn) === false ) {
-            this.switches.delete(hn);
-            this.changed = true;
-        }
-    }
-    // Add/change rules in other
-    for ( let [hn, bits] of from.switches ) {
-        if ( this.switches.get(hn) !== bits ) {
-            this.switches.set(hn, bits);
-            this.changed = true;
-        }
-    }
-};
-
-/******************************************************************************/
-
-HnSwitches.prototype.copyRules = function(from, srcHostname) {
-    let thisBits = this.switches.get(srcHostname);
-    let fromBits = from.switches.get(srcHostname);
-    if ( fromBits !== thisBits ) {
-        if ( fromBits !== undefined ) {
-            this.switches.set(srcHostname, fromBits);
-        } else {
-            this.switches.delete(srcHostname);
-        }
-        this.changed = true;
-    }
-    return this.changed;
-};
-
-/******************************************************************************/
-
-HnSwitches.prototype.hasSameRules = function(other, srcHostname) {
-    return this.switches.get(srcHostname) === other.switches.get(srcHostname);
 };
 
 /******************************************************************************/
@@ -124,65 +107,81 @@ HnSwitches.prototype.hasSameRules = function(other, srcHostname) {
 // If value is undefined, the switch is removed
 
 HnSwitches.prototype.toggle = function(switchName, hostname, newVal) {
-    let bitOffset = switchBitOffsets[switchName];
-    if ( bitOffset === undefined ) { return false; }
-    if ( newVal === this.evaluate(switchName, hostname) ) { return false; }
-    let bits = this.switches.get(hostname) || 0;
+    var bitOffset = switchBitOffsets[switchName];
+    if ( bitOffset === undefined ) {
+        return false;
+    }
+    if ( newVal === this.evaluate(switchName, hostname) ) {
+        return false;
+    }
+    var bits = this.switches[hostname] || 0;
     bits &= ~(3 << bitOffset);
     bits |= newVal << bitOffset;
     if ( bits === 0 ) {
-        this.switches.delete(hostname);
+        delete this.switches[hostname];
     } else {
-        this.switches.set(hostname, bits);
+        this.switches[hostname] = bits;
     }
-    this.changed = true;
     return true;
 };
 
 /******************************************************************************/
 
 HnSwitches.prototype.toggleOneZ = function(switchName, hostname, newState) {
-    let bitOffset = switchBitOffsets[switchName];
-    if ( bitOffset === undefined ) { return false; }
-    let state = this.evaluateZ(switchName, hostname);
-    if ( newState === state ) { return false; }
+    var bitOffset = switchBitOffsets[switchName];
+    if ( bitOffset === undefined ) {
+        return false;
+    }
+    var state = this.evaluateZ(switchName, hostname);
+    if ( newState === state ) {
+        return false;
+    }
     if ( newState === undefined ) {
         newState = !state;
     }
-    let bits = this.switches.get(hostname) || 0;
+    var bits = this.switches[hostname] || 0;
     bits &= ~(3 << bitOffset);
     if ( bits === 0 ) {
-        this.switches.delete(hostname);
+        delete this.switches[hostname];
     } else {
-        this.switches.set(hostname, bits);
+        this.switches[hostname] = bits;
     }
     state = this.evaluateZ(switchName, hostname);
-    if ( state !== newState ) {
-        this.switches.set(hostname, bits | ((newState ? 1 : 2) << bitOffset));
+    if ( state === newState ) {
+        return true;
     }
-    this.changed = true;
+    this.switches[hostname] = bits | ((newState ? 1 : 2) << bitOffset);
     return true;
 };
 
 /******************************************************************************/
 
 HnSwitches.prototype.toggleBranchZ = function(switchName, targetHostname, newState) {
-    this.toggleOneZ(switchName, targetHostname, newState);
+    var changed = this.toggleOneZ(switchName, targetHostname, newState);
+    var targetLen = targetHostname.length;
 
     // Turn off all descendant switches, they will inherit the state of the
     // branch's origin.
-    let targetLen = targetHostname.length;
-    for ( let hostname of this.switches.keys() ) {
-        if ( hostname === targetHostname ) { continue; }
-        if ( hostname.length <= targetLen ) { continue; }
-        if ( hostname.endsWith(targetHostname) === false ) { continue; }
+    for ( var hostname in this.switches ) {
+        if ( this.switches.hasOwnProperty(hostname) === false ) {
+            continue;
+        }
+        if ( hostname === targetHostname ) {
+            continue;
+        }
+        if ( hostname.length <= targetLen ) {
+            continue;
+        }
+        if ( hostname.endsWith(targetHostname) === false ) {
+            continue;
+        }
         if ( hostname.charAt(hostname.length - targetLen - 1) !== '.' ) {
             continue;
         }
-        this.toggle(switchName, hostname, 0);
+        changed = this.toggle(switchName, hostname, 0) || changed;
     }
 
-    return this.changed;
+    return changed;
 };
 
 /******************************************************************************/
@@ -201,11 +200,11 @@ HnSwitches.prototype.toggleZ = function(switchName, hostname, deep, newState) {
 // 2 = forced default state (to override a broader non-default state)
 
 HnSwitches.prototype.evaluate = function(switchName, hostname) {
-    let bits = this.switches.get(hostname);
-    if ( bits === undefined ) {
+    var bits = this.switches[hostname] || 0;
+    if ( bits === 0 ) {
         return 0;
     }
-    let bitOffset = switchBitOffsets[switchName];
+    var bitOffset = switchBitOffsets[switchName];
     if ( bitOffset === undefined ) {
         return 0;
     }
@@ -215,23 +214,27 @@ HnSwitches.prototype.evaluate = function(switchName, hostname) {
 /******************************************************************************/
 
 HnSwitches.prototype.evaluateZ = function(switchName, hostname) {
-    let bitOffset = switchBitOffsets[switchName];
+    var bitOffset = switchBitOffsets[switchName];
     if ( bitOffset === undefined ) {
         this.r = 0;
         return false;
     }
     this.n = switchName;
-    µBlock.decomposeHostname(hostname, this.decomposedSource);
-    for ( let shn of this.decomposedSource ) {
-        let bits = this.switches.get(shn);
-        if ( bits !== undefined ) {
+    var bits,
+        hn = hostname,
+        broadenSource = selectHostnameBroadener(hn);
+    for (;;) {
+        bits = this.switches[hn] || 0;
+        if ( bits !== 0 ) {
             bits = bits >>> bitOffset & 3;
             if ( bits !== 0 ) {
-                this.z = shn;
+                this.z = hn;
                 this.r = bits;
                 return bits === 1;
             }
         }
+        hn = broadenSource(hn);
+        if ( hn === '' ) { break; }
     }
     this.r = 0;
     return false;
@@ -249,15 +252,20 @@ HnSwitches.prototype.toLogData = function() {
 
 /******************************************************************************/
 
-HnSwitches.prototype.toArray = function() {
-    let out = [],
+HnSwitches.prototype.toString = function() {
+    var out = [],
+        switchName, val,
+        hostname,
         toUnicode = punycode.toUnicode;
-    for ( let hostname of this.switches.keys() ) {
-        for ( var switchName in switchBitOffsets ) {
+    for ( hostname in this.switches ) {
+        if ( this.switches.hasOwnProperty(hostname) === false ) {
+            continue;
+        }
+        for ( switchName in switchBitOffsets ) {
             if ( switchBitOffsets.hasOwnProperty(switchName) === false ) {
                 continue;
             }
-            let val = this.evaluate(switchName, hostname);
+            val = this.evaluate(switchName, hostname);
             if ( val === 0 ) { continue; }
             if ( hostname.indexOf('xn--') !== -1 ) {
                 hostname = toUnicode(hostname);
@@ -265,53 +273,59 @@ HnSwitches.prototype.toArray = function() {
             out.push(switchName + ': ' + hostname + ' ' + switchStateToNameMap[val]);
         }
     }
-    return out;
-};
-
-HnSwitches.prototype.toString = function() {
-    return this.toArray().join('\n');
+    return out.join('\n');
 };
 
 /******************************************************************************/
 
-HnSwitches.prototype.fromString = function(text, append) {
-    let lineIter = new µBlock.LineIterator(text);
-    if ( append !== true ) { this.reset(); }
+HnSwitches.prototype.fromString = function(text) {
+    var lineIter = new µBlock.LineIterator(text),
+        line, pos, fields,
+        switchName, hostname, state,
+        reNotASCII = /[^\x20-\x7F]/,
+        toASCII = punycode.toASCII;
+
+    this.reset();
+
     while ( lineIter.eot() === false ) {
-        this.addFromRuleParts(lineIter.next().trim().split(/\s+/));
-    }
-};
-
-/******************************************************************************/
-
-HnSwitches.prototype.validateRuleParts = function(parts) {
-    if ( parts.length < 3 ) { return; }
-    if ( parts[0].endsWith(':') === false ) { return; }
-    if ( nameToSwitchStateMap.hasOwnProperty(parts[2]) === false ) { return; }
-    // Performance: avoid punycoding if hostname is made only of ASCII chars.
-    if ( reNotASCII.test(parts[1]) ) { parts[1] = punycode.toASCII(parts[1]); }
-    return parts;
-};
-
-/******************************************************************************/
-
-HnSwitches.prototype.addFromRuleParts = function(parts) {
-    if ( this.validateRuleParts(parts) !== undefined ) {
-        let switchName = parts[0].slice(0, -1);
-        if ( switchBitOffsets.hasOwnProperty(switchName) ) {
-            this.toggle(switchName, parts[1], nameToSwitchStateMap[parts[2]]);
-            return true;
+        line = lineIter.next().trim();
+        pos = line.indexOf('# ');
+        if ( pos !== -1 ) {
+            line = line.slice(0, pos).trim();
         }
-    }
-    return false;
-};
+        if ( line === '' ) {
+            continue;
+        }
 
-HnSwitches.prototype.removeFromRuleParts = function(parts) {
-    if ( this.validateRuleParts(parts) !== undefined ) {
-        this.toggle(parts[0].slice(0, -1), parts[1], 0);
-        return true;
+        fields = line.split(/\s+/);
+        if ( fields.length !== 3 ) {
+            continue;
+        }
+
+        switchName = fields[0];
+        pos = switchName.indexOf(':');
+        if ( pos === -1 ) {
+            continue;
+        }
+        switchName = switchName.slice(0, pos);
+        if ( switchBitOffsets.hasOwnProperty(switchName) === false ) {
+            continue;
+        }
+
+        // Performance: avoid punycoding if hostname is made only of
+        // ASCII characters.
+        hostname = fields[1];
+        if ( reNotASCII.test(hostname) ) {
+            hostname = toASCII(hostname);
+        }
+
+        state = fields[2];
+        if ( nameToSwitchStateMap.hasOwnProperty(state) === false ) {
+            continue;
+        }
+
+        this.toggle(switchName, hostname, nameToSwitchStateMap[state]);
     }
-    return false;
 };
 
 /******************************************************************************/
@@ -324,7 +338,6 @@ return HnSwitches;
 
 /******************************************************************************/
 
-µBlock.sessionSwitches = new µBlock.HnSwitches();
-µBlock.permanentSwitches = new µBlock.HnSwitches();
+µBlock.hnSwitches = new µBlock.HnSwitches();
 
 /******************************************************************************/

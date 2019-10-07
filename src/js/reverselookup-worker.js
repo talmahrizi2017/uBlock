@@ -1,7 +1,7 @@
 /*******************************************************************************
 
     uBlock Origin - a browser extension to block requests.
-    Copyright (C) 2015-present Raymond Hill
+    Copyright (C) 2015-2017 Raymond Hill
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -25,18 +25,18 @@
 
 /******************************************************************************/
 
-const reBlockStart = /^#block-start-(\d+)\n/gm;
-let listEntries = Object.create(null);
+var listEntries = Object.create(null),
+    reBlockStart = /^#block-start-(\d+)\n/gm;
 
 /******************************************************************************/
 
-const extractBlocks = function(content, begId, endId) {
+var extractBlocks = function(content, begId, endId) {
     reBlockStart.lastIndex = 0;
-    const out = [];
-    let match = reBlockStart.exec(content);
+    var out = [];
+    var match = reBlockStart.exec(content);
     while ( match !== null ) {
-        const beg = match.index + match[0].length;
-        const blockId = parseInt(match[1], 10);
+        var beg = match.index + match[0].length;
+        var blockId = parseInt(match[1], 10);
         if ( blockId >= begId && blockId < endId ) {
             var end = content.indexOf('#block-end-' + match[1], beg);
             out.push(content.slice(beg, end));
@@ -49,22 +49,23 @@ const extractBlocks = function(content, begId, endId) {
 
 /******************************************************************************/
 
-const fromNetFilter = function(details) {
-    const lists = [];
-    const compiledFilter = details.compiledFilter;
+var fromNetFilter = function(details) {
+    var lists = [],
+        compiledFilter = details.compiledFilter,
+        entry, content, pos, notFound;
 
-    for ( const assetKey in listEntries ) {
-        const entry = listEntries[assetKey];
+    for ( var assetKey in listEntries ) {
+        entry = listEntries[assetKey];
         if ( entry === undefined ) { continue; }
-        const content = extractBlocks(entry.content, 0, 1000);
-        let pos = 0;
+        content = extractBlocks(entry.content, 0, 1000);
+        pos = 0;
         for (;;) {
             pos = content.indexOf(compiledFilter, pos);
             if ( pos === -1 ) { break; }
             // We need an exact match.
             // https://github.com/gorhill/uBlock/issues/1392
             // https://github.com/gorhill/uBlock/issues/835
-            const notFound = pos !== 0 && content.charCodeAt(pos - 1) !== 0x0A;
+            notFound = pos !== 0 && content.charCodeAt(pos - 1) !== 0x0A;
             pos += compiledFilter.length;
             if (
                 notFound ||
@@ -73,7 +74,6 @@ const fromNetFilter = function(details) {
                 continue;
             }
             lists.push({
-                assetKey: assetKey,
                 title: entry.title,
                 supportURL: entry.supportURL
             });
@@ -81,7 +81,7 @@ const fromNetFilter = function(details) {
         }
     }
 
-    const response = {};
+    var response = {};
     response[details.rawFilter] = lists;
 
     postMessage({
@@ -112,19 +112,18 @@ const fromNetFilter = function(details) {
 // FilterContainer.fromCompiledContent() is our reference code to create
 // the various compiled versions.
 
-const fromCosmeticFilter = function(details) {
-    const match = /^#@?#\^?/.exec(details.rawFilter);
-    const prefix = match[0];
-    const exception = prefix.charAt(1) === '@';
-    const selector = details.rawFilter.slice(prefix.length);
-    const isHtmlFilter = prefix.endsWith('^');
+var fromCosmeticFilter = function(details) {
+    var match = /^#@?#\^?/.exec(details.rawFilter),
+        prefix = match[0],
+        selector = details.rawFilter.slice(prefix.length);
 
     // The longer the needle, the lower the number of false positives.
-    const needle = selector.match(/\w+/g).reduce(function(a, b) {
-        return a.length > b.length ? a : b;
+    var needles = selector.match(/\w+/g).sort(function(a, b) {
+        return b.length - a.length;
     });
+    var reNeedle = new RegExp(needles[0], 'g');
 
-    const reHostname = new RegExp(
+    var reHostname = new RegExp(
         '^' +
         details.hostname.split('.').reduce(
             function(acc, item) {
@@ -137,7 +136,7 @@ const fromCosmeticFilter = function(details) {
         '$'
     );
 
-    let reEntity,
+    var reEntity,
         domain = details.domain,
         pos = domain.indexOf('.');
     if ( pos !== -1 ) {
@@ -155,102 +154,80 @@ const fromCosmeticFilter = function(details) {
         );
     }
         
-    const hostnameMatches = hn => {
-        return hn === '' ||
-               reHostname.test(hn) ||
-               reEntity !== undefined && reEntity.test(hn);
-    };
+    var response = Object.create(null),
+        assetKey, entry, content,
+        found, beg, end,
+        fargs, isProcedural;
 
-    const response = Object.create(null);
-
-    for ( const assetKey in listEntries ) {
-        const entry = listEntries[assetKey];
+    for ( assetKey in listEntries ) {
+        entry = listEntries[assetKey];
         if ( entry === undefined ) { continue; }
-        let content = extractBlocks(entry.content, 1000, 2000),
-            isProcedural,
-            found;
-        let pos = 0;
-        while ( (pos = content.indexOf(needle, pos)) !== -1 ) {
-            let beg = content.lastIndexOf('\n', pos);
+        content = extractBlocks(entry.content, 1000, 2000);
+        found = undefined;
+        while ( (match = reNeedle.exec(content)) !== null ) {
+            beg = content.lastIndexOf('\n', match.index);
             if ( beg === -1 ) { beg = 0; }
-            let end = content.indexOf('\n', pos);
+            end = content.indexOf('\n', reNeedle.lastIndex);
             if ( end === -1 ) { end = content.length; }
-            pos = end;
-            const fargs = JSON.parse(content.slice(beg, end));
-            const filterType = fargs[0];
-
-            // https://github.com/gorhill/uBlock/issues/2763
-            if ( filterType >= 0 && filterType <= 5 && details.ignoreGeneric ) {
-                continue;
-            }
-
-            // Do not confuse cosmetic filters with HTML ones.
-            if ( (filterType === 64) !== isHtmlFilter ) { continue; }
-
-            switch ( filterType ) {
-            // Lowly generic cosmetic filters
-            case 0: // simple id-based
+            fargs = JSON.parse(content.slice(beg, end));
+            switch ( fargs[0] ) {
+            case 0: // id-based
                 if (
-                    exception === false &&
                     fargs[1] === selector.slice(1) &&
                     selector.charAt(0) === '#'
                 ) {
                     found = prefix + selector;
                 }
                 break;
-            case 2: // simple class-based
+            case 1: // id-based
                 if (
-                    exception === false &&
+                    fargs[2] === selector.slice(1) &&
+                    selector.charAt(0) === '#'
+                ) {
+                    found = prefix + selector;
+                }
+                break;
+            case 2: // class-based
+                if (
                     fargs[1] === selector.slice(1) &&
                     selector.charAt(0) === '.'
                 ) {
                     found = prefix + selector;
                 }
                 break;
-            case 1: // complex id-based
-            case 3: // complex class-based
-                if ( exception === false && fargs[2] === selector ) {
+            case 3:
+                if (
+                    fargs[2] === selector.slice(1) &&
+                    selector.charAt(0) === '.'
+                ) {
                     found = prefix + selector;
                 }
                 break;
-            // Highly generic cosmetic filters
-            case 4: // simple highly generic
-            case 5: // complex highly generic
-            case 7: // generic exception
+            case 4:
+            case 5:
+            case 7:
                 if ( fargs[1] === selector ) {
                     found = prefix + selector;
                 }
                 break;
-            // Specific cosmetic filtering
             case 8:
-            // HTML filtering
+            case 9:
+            case 32:
             case 64:
-                if ( exception !== ((fargs[2] & 0b01) !== 0) ) { break; }
-                isProcedural = (fargs[2] & 0b10) !== 0;
+            case 65:
+                isProcedural = fargs[3].charCodeAt(0) === 0x7B;
                 if (
                     isProcedural === false && fargs[3] !== selector ||
                     isProcedural && JSON.parse(fargs[3]).raw !== selector
                 ) {
                     break;
                 }
-                if ( hostnameMatches(fargs[1]) === false ) { break; }
-                // https://www.reddit.com/r/uBlockOrigin/comments/d6vxzj/
-                //   Ignore match if specific cosmetic filters are disabled
                 if (
-                    filterType === 8 &&
-                    exception === false &&
-                    details.ignoreSpecific
+                    fargs[2] === '' ||
+                    reHostname.test(fargs[2]) === true ||
+                    reEntity !== undefined && reEntity.test(fargs[2]) === true
                 ) {
-                    break;
-                }
-                found = fargs[1] + prefix + selector;
-                break;
-            // Scriptlet injection
-            case 32:
-                if ( exception !== ((fargs[2] & 1) !== 0) ) { break; }
-                if ( fargs[3] !== selector ) { break; }
-                if ( hostnameMatches(fargs[1]) ) {
-                    found = fargs[1] + prefix + selector;
+                    found = fargs[2] + prefix + selector;
                 }
                 break;
             }
@@ -259,7 +236,6 @@ const fromCosmeticFilter = function(details) {
                     response[found] = [];
                 }
                 response[found].push({
-                    assetKey: assetKey,
                     title: entry.title,
                     supportURL: entry.supportURL
                 });
@@ -277,7 +253,7 @@ const fromCosmeticFilter = function(details) {
 /******************************************************************************/
 
 onmessage = function(e) { // jshint ignore:line
-    const msg = e.data;
+    var msg = e.data;
 
     switch ( msg.what ) {
     case 'resetLists':

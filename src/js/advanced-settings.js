@@ -1,7 +1,7 @@
 /*******************************************************************************
 
     uBlock Origin - a browser extension to block requests.
-    Copyright (C) 2016-present Raymond Hill
+    Copyright (C) 2016 Raymond Hill
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -19,113 +19,96 @@
     Home: https://github.com/gorhill/uBlock
 */
 
-/* global CodeMirror, uDom, uBlockDashboard */
+/* global uDom */
 
 'use strict';
 
 /******************************************************************************/
 
-(( ) => {
-// >>>> Start of private namespace
+(function() {
 
 /******************************************************************************/
 
-const noopFunc = function(){};
-
-let beforeHash = '';
-
-const cmEditor = new CodeMirror(
-    document.getElementById('advancedSettings'),
-    {
-        autofocus: true,
-        lineNumbers: true,
-        lineWrapping: true,
-        styleActiveLine: true
-    }
-);
-
-uBlockDashboard.patchCodeMirrorEditor(cmEditor);
+var messaging = vAPI.messaging;
+var cachedData = '';
+var rawAdvancedSettings = uDom.nodeFromId('advancedSettings');
 
 /******************************************************************************/
 
-const hashFromAdvancedSettings = function(raw) {
-    return raw.trim().replace(/\s*[\n\r]+\s*/g, '\n').replace(/[ \t]+/g, ' ');
+var hashFromAdvancedSettings = function(raw) {
+    return raw.trim().replace(/\s+/g, '|');
 };
 
 /******************************************************************************/
 
 // This is to give a visual hint that the content of user blacklist has changed.
 
-const advancedSettingsChanged = (( ) => {
-    let timer;
+var advancedSettingsChanged = (function () {
+    var timer = null;
 
-    const handler = ( ) => {
-        timer = undefined;
-        const changed =
-            hashFromAdvancedSettings(cmEditor.getValue()) !== beforeHash;
+    var handler = function() {
+        timer = null;
+        var changed = hashFromAdvancedSettings(rawAdvancedSettings.value) !== cachedData;
         uDom.nodeFromId('advancedSettingsApply').disabled = !changed;
-        CodeMirror.commands.save = changed ? applyChanges : noopFunc;
     };
 
     return function() {
-        if ( timer !== undefined ) { clearTimeout(timer); }
+        if ( timer !== null ) {
+            clearTimeout(timer);
+        }
         timer = vAPI.setTimeout(handler, 100);
     };
 })();
 
-cmEditor.on('changes', advancedSettingsChanged);
+/******************************************************************************/
+
+function renderAdvancedSettings() {
+    var onRead = function(raw) {
+        cachedData = hashFromAdvancedSettings(raw);
+        var pretty = [],
+            whitespaces = '                                ',
+            lines = raw.split('\n'),
+            max = 0,
+            pos,
+            i, n = lines.length;
+        for ( i = 0; i < n; i++ ) {
+            pos = lines[i].indexOf(' ');
+            if ( pos > max ) {
+                max = pos;
+            }
+        }
+        for ( i = 0; i < n; i++ ) {
+            pos = lines[i].indexOf(' ');
+            pretty.push(whitespaces.slice(0, max - pos) + lines[i]);
+        }
+        rawAdvancedSettings.value = pretty.join('\n') + '\n';
+        advancedSettingsChanged();
+        rawAdvancedSettings.focus();
+    };
+    messaging.send('dashboard', { what: 'readHiddenSettings' }, onRead);
+}
 
 /******************************************************************************/
 
-const renderAdvancedSettings = async function(first) {
-    const raw = await vAPI.messaging.send('dashboard', {
-        what: 'readHiddenSettings',
-    });
-
-    beforeHash = hashFromAdvancedSettings(raw);
-    let pretty = [],
-        whitespaces = '                                ',
-        lines = raw.split('\n'),
-        max = 0;
-    for ( let line of lines ) {
-        let pos = line.indexOf(' ');
-        if ( pos > max ) { max = pos; }
-    }
-    for ( let line of lines ) {
-        let pos = line.indexOf(' ');
-        pretty.push(whitespaces.slice(0, max - pos) + line);
-    }
-    cmEditor.setValue(pretty.join('\n') + '\n');
-    if ( first ) {
-        cmEditor.clearHistory();
-    }
-    advancedSettingsChanged();
-    cmEditor.focus();
+var applyChanges = function() {
+    messaging.send(
+        'dashboard',
+        {
+            what: 'writeHiddenSettings',
+            content: rawAdvancedSettings.value
+        },
+        renderAdvancedSettings
+    );
 };
 
 /******************************************************************************/
 
-const applyChanges = async function() {
-    await vAPI.messaging.send('dashboard', {
-        what: 'writeHiddenSettings',
-        content: cmEditor.getValue(),
-    });
-    renderAdvancedSettings();
-};
+// Handle user interaction
+uDom('#advancedSettings').on('input', advancedSettingsChanged);
+uDom('#advancedSettingsApply').on('click', applyChanges);
+
+renderAdvancedSettings();
 
 /******************************************************************************/
 
-uDom.nodeFromId('advancedSettings').addEventListener(
-    'input',
-    advancedSettingsChanged
-);
-uDom.nodeFromId('advancedSettingsApply').addEventListener('click', ( ) => {
-    applyChanges();
-});
-
-renderAdvancedSettings(true);
-
-/******************************************************************************/
-
-// <<<< End of private namespace
 })();

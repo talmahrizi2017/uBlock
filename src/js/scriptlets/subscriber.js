@@ -1,7 +1,7 @@
 /*******************************************************************************
 
     uBlock Origin - a browser extension to block requests.
-    Copyright (C) 2015-present Raymond Hill
+    Copyright (C) 2015-2017 Raymond Hill
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -30,7 +30,7 @@
 
 /******************************************************************************/
 
-(( ) => {
+(function() {
 
 /******************************************************************************/
 
@@ -48,57 +48,61 @@ if ( typeof vAPI !== 'object' ) {
 
 /******************************************************************************/
 
-const processSubscription = async function(location, title) {
-    const details = await vAPI.messaging.send('scriptlets', {
-        what: 'subscriberData',
-    });
-
-    const confirmStr = details.confirmStr
-                        .replace('{{url}}', location)
-                        .replace('{{title}}', title);
-    if ( window.confirm(confirmStr) === false ) { return; }
-
-    await vAPI.messaging.send('scriptlets', {
-        what: 'applyFilterListSelection',
-        toImport: location,
-    });
-
-    vAPI.messaging.send('scriptlets', {
-        what: 'reloadAllFilters',
-    });
-};
-
-/******************************************************************************/
-
-const onMaybeAbpLinkClicked = function(ev) {
-    if ( ev.button !== 0 ) { return; }
+var onMaybeAbpLinkClicked = function(ev) {
+    if ( ev.button !== 0 ) {
+        return;
+    }
     // This addresses https://github.com/easylist/EasyListHebrew/issues/89
     // Also, as per feedback to original fix:
     // https://github.com/gorhill/uBlock/commit/99a3d9631047d33dc7a454296ab3dd0a1e91d6f1
-    const target = ev.target;
+    var target = ev.target;
     if (
         ev.isTrusted === false ||
         target instanceof HTMLAnchorElement === false
     ) {
         return;
     }
-
-    const href = target.href || '';
-    if ( href === '' ) { return; }
-
-    let matches = /^(?:abp|ubo):\/*subscribe\/*\?location=([^&]+).*title=([^&]+)/.exec(href);
+    var href = target.href || '';
+    if ( href === '' ) {
+        return;
+    }
+    var matches = /^abp:\/*subscribe\/*\?location=([^&]+).*title=([^&]+)/.exec(href);
     if ( matches === null ) {
         matches = /^https?:\/\/.*?[&?]location=([^&]+).*?&title=([^&]+)/.exec(href);
         if ( matches === null ) { return; }
     }
 
-    const location = decodeURIComponent(matches[1]);
-    const title = decodeURIComponent(matches[2]);
-
-    processSubscription(location, title);
+    var location = decodeURIComponent(matches[1]);
+    var title = decodeURIComponent(matches[2]);
+    var messaging = vAPI.messaging;
 
     ev.stopPropagation();
     ev.preventDefault();
+
+    var onListsSelectionDone = function() {
+        messaging.send('scriptlets', { what: 'reloadAllFilters' });
+    };
+
+    var onSubscriberDataReady = function(details) {
+        var confirmStr = details.confirmStr
+                            .replace('{{url}}', location)
+                            .replace('{{title}}', title);
+        if ( !window.confirm(confirmStr) ) { return; }
+        messaging.send(
+            'scriptlets',
+            {
+                what: 'applyFilterListSelection',
+                toImport: location
+            },
+            onListsSelectionDone
+        );
+    };
+
+    messaging.send(
+        'scriptlets',
+        { what: 'subscriberData' },
+        onSubscriberDataReady
+    );
 };
 
 /******************************************************************************/
@@ -108,7 +112,7 @@ const onMaybeAbpLinkClicked = function(ev) {
 setTimeout(function() {
     if (
         document.querySelector('link[rel="canonical"][href="https://filterlists.com/"]') !== null ||
-        document.querySelector('a[href^="abp:"],a[href^="ubo:"],a[href^="https://subscribe.adblockplus.org/?"]') !== null
+        document.querySelector('a[href^="abp:"],a[href^="https://subscribe.adblockplus.org/?"]') !== null
     ) {
         document.addEventListener('click', onMaybeAbpLinkClicked);
     }
@@ -118,22 +122,4 @@ setTimeout(function() {
 
 })();
 
-
-
-
-
-
-
-
-/*******************************************************************************
-
-    DO NOT:
-    - Remove the following code
-    - Add code beyond the following code
-    Reason:
-    - https://github.com/gorhill/uBlock/pull/3721
-    - uBO never uses the return value from injected content scripts
-
-**/
-
-void 0;
+/******************************************************************************/

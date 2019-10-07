@@ -1,7 +1,7 @@
 /*******************************************************************************
 
     uBlock Origin - a browser extension to block requests.
-    Copyright (C) 2015 Raymond Hill
+    Copyright (C) 2015-2016 Raymond Hill
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -19,49 +19,45 @@
     Home: https://github.com/gorhill/uBlock
 */
 
-/******************************************************************************/
-
-(function() {
-
 'use strict';
 
 /******************************************************************************/
 
-// For all media resources which have failed to load, trigger a reload.
+(function() {
 
-var elems, i, elem, src;
+/******************************************************************************/
 
-// <audio> and <video> elements.
-// https://developer.mozilla.org/en-US/docs/Web/API/HTMLMediaElement
-
-elems = document.querySelectorAll('audio,video');
-i = elems.length;
-while ( i-- ) {
-    elem = elems[i];
-    if ( elem.error !== null ) {
-        elem.load();
-    }
+if ( typeof vAPI.rpcReceiver !== 'object' ) {
+    return;
 }
 
-// <img> elements.
-// https://developer.mozilla.org/en-US/docs/Web/API/HTMLMediaElement
+/******************************************************************************/
 
-elems = document.querySelectorAll('img');
-i = elems.length;
-while ( i-- ) {
-    elem = elems[i];
-    if ( elem.naturalWidth !== 0 && elem.naturalHeight !== 0 ) {
-        continue;
+vAPI.rpcReceiver.getScriptTagHostnames = function() {
+    var µb = µBlock;
+    if ( µb.htmlFilteringEngine ) {
+        return µb.htmlFilteringEngine.retrieveScriptTagHostnames();
     }
-    if ( window.getComputedStyle(elem).getPropertyValue('display') === 'none' ) {
-        continue;
+};
+
+/******************************************************************************/
+
+vAPI.rpcReceiver.getScriptTagFilters = function(details) {
+    var µb = µBlock;
+    if ( !µb.htmlFilteringEngine ) { return; }
+    // Fetching the script tag filters first: assuming it is faster than
+    // checking whether the site is whitelisted.
+    var hostname = details.frameHostname;
+    var r = µb.htmlFilteringEngine.retrieveScriptTagRegex(
+        µb.URI.domainFromHostname(hostname),
+        hostname
+    );
+    // https://github.com/gorhill/uBlock/issues/838
+    // Disable script tag filtering if document URL is whitelisted.
+    if ( r !== undefined && µb.getNetFilteringSwitch(details.rootURL) ) {
+        return r;
     }
-    src = elem.getAttribute('src');
-    if ( src ) {
-        elem.removeAttribute('src');
-        elem.setAttribute('src', src);
-    }
-}
+};
 
 /******************************************************************************/
 

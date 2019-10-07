@@ -1,7 +1,7 @@
 /*******************************************************************************
 
     uBlock Origin - a browser extension to block requests.
-    Copyright (C) 2015-present Raymond Hill
+    Copyright (C) 2015-2016 Raymond Hill
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -19,11 +19,11 @@
     Home: https://github.com/gorhill/uBlock
 */
 
-'use strict';
-
 /******************************************************************************/
 
-(( ) => {
+(function() {
+
+'use strict';
 
 /******************************************************************************/
 
@@ -34,18 +34,19 @@ if ( typeof vAPI !== 'object' || vAPI.loadLargeMediaInteractive === true ) {
 
 /******************************************************************************/
 
-const largeMediaElementAttribute = 'data-' + vAPI.sessionId;
-const largeMediaElementSelector =
+var largeMediaElementAttribute = 'data-' + vAPI.sessionId;
+var largeMediaElementSelector =
     ':root audio[' + largeMediaElementAttribute + '],\n' +
     ':root   img[' + largeMediaElementAttribute + '],\n' +
     ':root video[' + largeMediaElementAttribute + ']';
 
 /******************************************************************************/
 
-const mediaNotLoaded = function(elem) {
-    const src = elem.getAttribute('src') || '';
-    if ( src === '' ) { return false; }
-
+var mediaNotLoaded = function(elem) {
+    var src = elem.getAttribute('src') || '';
+    if ( src === '' ) {
+        return false;
+    }
     switch ( elem.localName ) {
     case 'audio':
     case 'video':
@@ -54,7 +55,7 @@ const mediaNotLoaded = function(elem) {
         if ( elem.naturalWidth !== 0 || elem.naturalHeight !== 0 ) {
             break;
         }
-        const style = window.getComputedStyle(elem);
+        var style = window.getComputedStyle(elem);
         // For some reason, style can be null with Pale Moon.
         return style !== null ?
             style.getPropertyValue('display') !== 'none' :
@@ -73,7 +74,7 @@ const mediaNotLoaded = function(elem) {
 // https://developer.mozilla.org/en-US/docs/Web/API/HTMLMediaElement
 // https://developer.mozilla.org/en-US/docs/Web/API/HTMLMediaElement
 
-const surveyMissingMediaElements = function() {
+var surveyMissingMediaElements = function() {
     var largeMediaElementCount = 0;
     var elems = document.querySelectorAll('audio,img,video');
     var i = elems.length, elem;
@@ -94,7 +95,7 @@ if ( surveyMissingMediaElements() === 0 ) {
 vAPI.loadLargeMediaInteractive = true;
 
 // Insert custom style tag.
-let styleTag = document.createElement('style');
+var styleTag = document.createElement('style');
 styleTag.setAttribute('type', 'text/css');
 styleTag.textContent = [
     largeMediaElementSelector + ' {',
@@ -113,10 +114,10 @@ document.head.appendChild(styleTag);
 
 /******************************************************************************/
 
-const stayOrLeave = (( ) => {
-    let timer = null;
+var stayOrLeave = (function() {
+    var timer = null;
 
-    const timeoutHandler = function(leaveNow) {
+    var timeoutHandler = function(leaveNow) {
         timer = null;
         if ( leaveNow !== true ) {
             if ( 
@@ -150,26 +151,15 @@ const stayOrLeave = (( ) => {
 
 /******************************************************************************/
 
-const loadImage = async function(elem) {
-    const src = elem.getAttribute('src');
-    elem.removeAttribute('src');
+var onMouseClick = function(ev) {
+    if ( ev.button !== 0 ) {
+        return;
+    }
 
-    await vAPI.messaging.send('scriptlets', {
-        what: 'temporarilyAllowLargeMediaElement',
-    });
-
-    elem.setAttribute('src', src);
-    elem.removeAttribute(largeMediaElementAttribute);
-    stayOrLeave();
-};
-
-/******************************************************************************/
-
-const onMouseClick = function(ev) {
-    if ( ev.button !== 0 ) { return; }
-
-    const elem = ev.target;
-    if ( elem.matches(largeMediaElementSelector) === false ) { return; }
+    var elem = ev.target;
+    if ( elem.matches(largeMediaElementSelector) === false ) {
+        return;
+    }
 
     if ( mediaNotLoaded(elem) === false ) {
         elem.removeAttribute(largeMediaElementAttribute);
@@ -177,7 +167,20 @@ const onMouseClick = function(ev) {
         return;
     }
 
-    loadImage(elem);
+    var src = elem.getAttribute('src');
+    elem.removeAttribute('src');
+
+    var onLargeMediaElementAllowed = function() {
+        elem.setAttribute('src', src);
+        elem.removeAttribute(largeMediaElementAttribute);
+        stayOrLeave();
+    };
+
+    vAPI.messaging.send(
+        'scriptlets',
+        { what: 'temporarilyAllowLargeMediaElement' },
+        onLargeMediaElementAllowed
+    );
 
     ev.preventDefault();
     ev.stopPropagation();
@@ -187,8 +190,8 @@ document.addEventListener('click', onMouseClick, true);
 
 /******************************************************************************/
 
-const onLoad = function(ev) {
-    const elem = ev.target;
+var onLoad = function(ev) {
+    var elem = ev.target;
     if ( elem.hasAttribute(largeMediaElementAttribute) ) {
         elem.removeAttribute(largeMediaElementAttribute);
         stayOrLeave();
@@ -199,8 +202,8 @@ document.addEventListener('load', onLoad, true);
 
 /******************************************************************************/
 
-const onLoadError = function(ev) {
-    const elem = ev.target;
+var onLoadError = function(ev) {
+    var elem = ev.target;
     if ( mediaNotLoaded(elem) ) {
         elem.setAttribute(largeMediaElementAttribute, '');
     }
@@ -218,22 +221,4 @@ vAPI.shutdown.add(function() {
 
 })();
 
-
-
-
-
-
-
-
-/*******************************************************************************
-
-    DO NOT:
-    - Remove the following code
-    - Add code beyond the following code
-    Reason:
-    - https://github.com/gorhill/uBlock/pull/3721
-    - uBO never uses the return value from injected content scripts
-
-**/
-
-void 0;
+/******************************************************************************/

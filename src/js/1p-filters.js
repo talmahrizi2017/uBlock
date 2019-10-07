@@ -1,7 +1,7 @@
 /*******************************************************************************
 
     uBlock Origin - a browser extension to block requests.
-    Copyright (C) 2014-present Raymond Hill
+    Copyright (C) 2014-2016 Raymond Hill
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -19,134 +19,107 @@
     Home: https://github.com/gorhill/uBlock
 */
 
-/* global CodeMirror, uDom, uBlockDashboard */
+/* global uDom, uBlockDashboard */
+
+/******************************************************************************/
+
+(function() {
 
 'use strict';
 
 /******************************************************************************/
 
-(( ) => {
-
-/******************************************************************************/
-
-const cmEditor = new CodeMirror(
-    document.getElementById('userFilters'),
-    {
-        autofocus: true,
-        lineNumbers: true,
-        lineWrapping: true,
-        styleActiveLine: true,
-    }
-);
-
-uBlockDashboard.patchCodeMirrorEditor(cmEditor);
-
-let cachedUserFilters = '';
-
-/******************************************************************************/
-
-// https://github.com/gorhill/uBlock/issues/3706
-//   Save/restore cursor position
-//
-// CoreMirror reference: https://codemirror.net/doc/manual.html#api_selection
-
-window.addEventListener('beforeunload', ( ) => {
-    vAPI.localStorage.setItem(
-        'myFiltersCursorPosition',
-        JSON.stringify(cmEditor.getCursor().line)
-    );
-});
+var messaging = vAPI.messaging;
+var cachedUserFilters = '';
 
 /******************************************************************************/
 
 // This is to give a visual hint that the content of user blacklist has changed.
 
-const userFiltersChanged = function(changed) {
+function userFiltersChanged(changed) {
     if ( typeof changed !== 'boolean' ) {
-        changed = self.hasUnsavedData();
+        changed = uDom.nodeFromId('userFilters').value.trim() !== cachedUserFilters;
     }
     uDom.nodeFromId('userFiltersApply').disabled = !changed;
     uDom.nodeFromId('userFiltersRevert').disabled = !changed;
-};
+}
 
 /******************************************************************************/
 
-const renderUserFilters = async function(first) {
-    const details = await vAPI.messaging.send('dashboard', {
-        what: 'readUserFilters',
-    });
-    if ( details instanceof Object === false || details.error ) { return; }
-
-    let content = details.content.trim();
-    cachedUserFilters = content;
-    if ( content.length !== 0 ) {
-        content += '\n';
-    }
-    cmEditor.setValue(content);
-    if ( first ) {
-        cmEditor.clearHistory();
-        try {
-            const line = JSON.parse(
-                vAPI.localStorage.getItem('myFiltersCursorPosition')
-            );
-            if ( typeof line === 'number' ) {
-                cmEditor.setCursor(line, 0);
-            }
-        } catch(ex) {
+function renderUserFilters(first) {
+    var onRead = function(details) {
+        if ( details.error ) { return; }
+        var textarea = uDom.nodeFromId('userFilters');
+        cachedUserFilters = details.content.trim();
+        textarea.value = details.content;
+        if ( first ) {
+            textarea.value += '\n';
+            var textlen = textarea.value.length;
+            textarea.setSelectionRange(textlen, textlen);
+            textarea.focus();
         }
-    }
-    userFiltersChanged(false);
-};
+        userFiltersChanged(false);
+    };
+    messaging.send('dashboard', { what: 'readUserFilters' }, onRead);
+}
 
 /******************************************************************************/
 
-const handleImportFilePicker = function() {
+function allFiltersApplyHandler() {
+    messaging.send('dashboard', { what: 'reloadAllFilters' });
+    uDom('#userFiltersApply').prop('disabled', true );
+}
+
+/******************************************************************************/
+
+var handleImportFilePicker = function() {
     // https://github.com/chrisaljoudi/uBlock/issues/1004
     // Support extraction of filters from ABP backup file
-    const abpImporter = function(s) {
-        const reAbpSubscriptionExtractor = /\n\[Subscription\]\n+url=~[^\n]+([\x08-\x7E]*?)(?:\[Subscription\]|$)/ig;
-        const reAbpFilterExtractor = /\[Subscription filters\]([\x08-\x7E]*?)(?:\[Subscription\]|$)/i;
-        let matches = reAbpSubscriptionExtractor.exec(s);
+    var abpImporter = function(s) {
+        var reAbpSubscriptionExtractor = /\n\[Subscription\]\n+url=~[^\n]+([\x08-\x7E]*?)(?:\[Subscription\]|$)/ig;
+        var reAbpFilterExtractor = /\[Subscription filters\]([\x08-\x7E]*?)(?:\[Subscription\]|$)/i;
+        var matches = reAbpSubscriptionExtractor.exec(s);
         // Not an ABP backup file
-        if ( matches === null ) { return s; }
-        const out = [];
-        do {
+        if ( matches === null ) {
+            return s;
+        }
+        // 
+        var out = [];
+        var filterMatch;
+        while ( matches !== null ) {
             if ( matches.length === 2 ) {
-                let filterMatch = reAbpFilterExtractor.exec(matches[1].trim());
+                filterMatch = reAbpFilterExtractor.exec(matches[1].trim());
                 if ( filterMatch !== null && filterMatch.length === 2 ) {
                     out.push(filterMatch[1].trim().replace(/\\\[/g, '['));
                 }
             }
             matches = reAbpSubscriptionExtractor.exec(s);
-        } while ( matches !== null );
+        }
         return out.join('\n');
     };
 
-    const fileReaderOnLoadHandler = function() {
-        let content = abpImporter(this.result);
-        content = uBlockDashboard.mergeNewLines(
-            cmEditor.getValue().trim(),
-            content
-        );
-        cmEditor.operation(( ) => {
-            const cmPos = cmEditor.getCursor();
-            cmEditor.setValue(`${content}\n`);
-            cmEditor.setCursor(cmPos);
-            cmEditor.focus();
-        });
+    var fileReaderOnLoadHandler = function() {
+        var sanitized = abpImporter(this.result);
+        var textarea = uDom('#userFilters');
+        textarea.val(textarea.val().trim() + '\n' + sanitized);
+        userFiltersChanged();
     };
-    const file = this.files[0];
-    if ( file === undefined || file.name === '' ) { return; }
-    if ( file.type.indexOf('text') !== 0 ) { return; }
-    const fr = new FileReader();
+    var file = this.files[0];
+    if ( file === undefined || file.name === '' ) {
+        return;
+    }
+    if ( file.type.indexOf('text') !== 0 ) {
+        return;
+    }
+    var fr = new FileReader();
     fr.onload = fileReaderOnLoadHandler;
     fr.readAsText(file);
 };
 
 /******************************************************************************/
 
-const startImportFilePicker = function() {
-    const input = document.getElementById('importFilePicker');
+var startImportFilePicker = function() {
+    var input = document.getElementById('importFilePicker');
     // Reset to empty string, this will ensure an change event is properly
     // triggered if the user pick a file, even if it is the same as the last
     // one picked.
@@ -156,10 +129,12 @@ const startImportFilePicker = function() {
 
 /******************************************************************************/
 
-const exportUserFiltersToFile = function() {
-    const val = cmEditor.getValue().trim();
-    if ( val === '' ) { return; }
-    const filename = vAPI.i18n('1pExportFilename')
+var exportUserFiltersToFile = function() {
+    var val = uDom('#userFilters').val().trim();
+    if ( val === '' ) {
+        return;
+    }
+    var filename = vAPI.i18n('1pExportFilename')
         .replace('{{datetime}}', uBlockDashboard.dateNowToSensibleString())
         .replace(/ +/g, '_');
     vAPI.download({
@@ -170,40 +145,55 @@ const exportUserFiltersToFile = function() {
 
 /******************************************************************************/
 
-const applyChanges = async function() {
-    const details = await vAPI.messaging.send('dashboard', {
+var applyChanges = function() {
+    var textarea = uDom.nodeFromId('userFilters');
+
+    var onWritten = function(details) {
+        if ( details.error ) {
+            return;
+        }
+        textarea.value = details.content;
+        cachedUserFilters = details.content.trim();
+        userFiltersChanged();
+        allFiltersApplyHandler();
+        textarea.focus();
+    };
+
+    var request = {
         what: 'writeUserFilters',
-        content: cmEditor.getValue(),
-    });
-    if ( details instanceof Object === false || details.error ) { return; }
-
-    cachedUserFilters = details.content.trim();
-    userFiltersChanged(false);
-    vAPI.messaging.send('dashboard', {
-        what: 'reloadAllFilters',
-    });
+        content: textarea.value
+    };
+    messaging.send('dashboard', request, onWritten);
 };
 
-const revertChanges = function() {
-    let content = cachedUserFilters;
-    if ( content.length !== 0 ) {
-        content += '\n';
-    }
-    cmEditor.setValue(content);
+var revertChanges = function() {
+    uDom.nodeFromId('userFilters').value = cachedUserFilters + '\n';
+    userFiltersChanged();
 };
+    //Tariq:
+
+var toClose = window.onbeforeunload = function(){
+	return "Do you want to leave the page"; 
+
+};
+
 
 /******************************************************************************/
 
-const getCloudData = function() {
-    return cmEditor.getValue();
+var getCloudData = function() {
+    return uDom.nodeFromId('userFilters').value;
 };
 
-const setCloudData = function(data, append) {
-    if ( typeof data !== 'string' ) { return; }
-    if ( append ) {
-        data = uBlockDashboard.mergeNewLines(cmEditor.getValue(), data);
+var setCloudData = function(data, append) {
+    if ( typeof data !== 'string' ) {
+        return;
     }
-    cmEditor.setValue(data);
+    var textarea = uDom.nodeFromId('userFilters');
+    if ( append ) {
+        data = uBlockDashboard.mergeNewLines(textarea.value, data);
+    }
+    textarea.value = data;
+    userFiltersChanged();
 };
 
 self.cloud.onPush = getCloudData;
@@ -211,24 +201,18 @@ self.cloud.onPull = setCloudData;
 
 /******************************************************************************/
 
-self.hasUnsavedData = function() {
-    return cmEditor.getValue().trim() !== cachedUserFilters;
-};
-
-/******************************************************************************/
-
 // Handle user interaction
 uDom('#importUserFiltersFromFile').on('click', startImportFilePicker);
 uDom('#importFilePicker').on('change', handleImportFilePicker);
 uDom('#exportUserFiltersToFile').on('click', exportUserFiltersToFile);
-uDom('#userFiltersApply').on('click', ( ) => { applyChanges(); });
+uDom('#userFilters').on('input', userFiltersChanged);
+uDom('#userFiltersApply').on('click', applyChanges);
 uDom('#userFiltersRevert').on('click', revertChanges);
 
 renderUserFilters(true);
 
-cmEditor.on('changes', userFiltersChanged);
-CodeMirror.commands.save = applyChanges;
-
 /******************************************************************************/
+
+// https://www.youtube.com/watch?v=UNilsLf6eW4
 
 })();

@@ -25,7 +25,7 @@
 
 µBlock.textEncode = (function() {
 
-    if ( µBlock.canFilterResponseData !== true ) { return; }
+    if ( µBlock.canFilterResponseBody !== true ) { return; }
 
     // charset aliases extracted from:
     // https://github.com/inexorabletash/text-encoding/blob/b4e5bc26e26e51f56e3daa9f13138c79f49d3c34/lib/encoding.js#L342

@@ -1,7 +1,7 @@
 /*******************************************************************************
 
     uBlock Origin - a browser extension to block requests.
-    Copyright (C) 2014-present Raymond Hill
+    Copyright (C) 2014-2016 Raymond Hill
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -19,38 +19,37 @@
     Home: https://github.com/gorhill/uBlock
 */
 
-/* global CodeMirror, uBlockDashboard */
+/* global uDom */
+
+/******************************************************************************/
+
+(function() {
 
 'use strict';
 
 /******************************************************************************/
 
-(async ( ) => {
-    const params = new URL(document.location).searchParams;
-    const assetKey = params.get('url');
-    if ( assetKey === null ) { return; }
+var onAssetContentReceived = function(details) {
+    uDom('#content').text(details && (details.content || ''));
+};
 
-    const cmEditor = new CodeMirror(
-        document.getElementById('content'),
-        {
-            autofocus: true,
-            lineNumbers: true,
-            lineWrapping: true,
-            readOnly: true,
-            styleActiveLine: true,
-        }
-    );
+/******************************************************************************/
 
-    uBlockDashboard.patchCodeMirrorEditor(cmEditor);
+var q = window.location.search;
+var matches = q.match(/^\?url=([^&]+)/);
+if ( !matches || matches.length !== 2 ) {
+    return;
+}
 
-    const details = await vAPI.messaging.send('default', {
+vAPI.messaging.send(
+    'default',
+    {
         what : 'getAssetContent',
-        url: assetKey,
-    });
-    cmEditor.setValue(details && details.content || '');
-    if ( details.sourceURL ) {
-        const a = document.querySelector('.cm-search-widget .sourceURL');
-        a.setAttribute('href', details.sourceURL);
-        a.setAttribute('title', details.sourceURL);
-    }
+        url: decodeURIComponent(matches[1])
+    },
+    onAssetContentReceived
+);
+
+/******************************************************************************/
+
 })();
