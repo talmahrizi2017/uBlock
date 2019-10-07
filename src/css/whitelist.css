@@ -1,18 +1,40 @@
-html {
-    height: 100vh;
-    overflow: hidden;
+div > p:first-child {
+    margin-top: 0;
     }
-body {
-    overflow: hidden;
+div > p:last-child {
+    margin-bottom: 0;
     }
 #whitelist {
-    height: 75vh;
+    border: 1px solid gray;
+    height: 60vh;
+    margin: 0;
+    padding: 1px;
+    position: relative;
+    resize: vertical;
+    }
+#whitelist.invalid {
+    border-color: red;
+    }
+#whitelist textarea {
+    border: none;
+    box-sizing: border-box;
+    height: 100%;
+    padding: 0.4em;
+    resize: none;
     text-align: left;
+    white-space: pre;
     width: 100%;
     }
-.codeMirrorContainer .cm-builtin {
-    color: #00F;
-    }
-.codeMirrorContainer .cm-comment.cm-builtin {
-    color: #88F;
-    }
+#whitelist textarea + div {
+    background-color: red;
+    bottom: 0;
+    color: white;
+    display: none;
+    padding: 2px 4px;
+    pointer-events: none;
+    position: absolute;
+    right: 0;
+}
+#whitelist.invalid textarea + div {
+    display: block;
+}
